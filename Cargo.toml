@@ -73,6 +73,7 @@ render = [
 # serde = ["dep:serde", "glam/serde"]
 
 [dependencies]
+openssl-sys = { version = "0.9.11", features = ["vendored"] }
 ranim-core.workspace = true
 ranim-items.workspace = true
 ranim-anims.workspace = true
