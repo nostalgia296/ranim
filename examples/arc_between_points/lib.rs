@@ -9,7 +9,7 @@ use ranim::{
 };
 
 #[scene]
-#[output(dir = "arc_between_points")]
+#[output(dir = "./output/arc_between_points")]
 fn arc_between_points(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
     let center = dvec2(0.0, 0.0);
@@ -43,7 +43,7 @@ fn arc_between_points(r: &mut RanimScene) {
             )
         })
         .collect::<Vec<_>>();
-    let r_arcs = r.new_timeline();
+    let r_arcs = r.insert_empty();
 
     r.timeline_mut(r_arcs)
         .play(arcs.lagged(0.2, |arc| arc.fade_in()).with_duration(3.0));

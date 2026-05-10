@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(git worktree add:*)",
+      "Bash(cargo test:*)",
+      "Bash(gh pr list:*)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(cargo build:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(cargo bench:*)",
+      "Bash(cargo clippy:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(git pull:*)"
+    ],
+    "additionalDirectories": [
+      "/Volumes/Files/_ranim"
+    ]
+  }
+}

@@ -38,7 +38,7 @@
         inherit (pkgs) lib;
         craneLib = (crane.mkLib pkgs).overrideToolchain (
           p:
-          p.rust-bin.nightly.latest.default.override {
+          p.rust-bin.nightly."2026-01-01".default.override {
             targets = [ "wasm32-unknown-unknown" ];
             extensions = [ "rust-src" ];
           }
@@ -119,7 +119,8 @@
           ]
           ++ (with pkgs; [
             git-cliff
-            cargo-release
+            # cargo-release
+            cargo-edit
             samply
             cargo-udeps
             miniserve
@@ -128,12 +129,15 @@
             mdbook
             wasm-pack
             mdbook-mermaid
+            typst
+            gh
             # wasm-bindgen-cli_0_2_106
             # mdbook-katex
             # wasm-bindgen-cli
             # mdbook-i18n-helpers
           ])
           ++ [
+            (pkgs.callPackage ./cargo-release.nix { })
             (pkgs.callPackage ./mdbook-katex.nix { })
             (pkgs.callPackage ./wasm-bindgen-cli.nix { })
             ciallo.packages.${system}.default

@@ -3,7 +3,7 @@ use ranim::prelude::*;
 pub mod test_scenes {
     use itertools::Itertools;
     use ranim::{
-        anims::transform::TransformAnim,
+        anims::morph::MorphAnim,
         glam::{DVec3, dvec3},
         items::vitem::{
             VItem,
@@ -25,9 +25,7 @@ pub mod test_scenes {
             .cartesian_product(0..n)
             .map(|(i, j)| {
                 Square::new(size).with(|square| {
-                    square.put_center_on(
-                        start + unit * DVec3::X * j as f64 + unit * DVec3::Y * i as f64,
-                    );
+                    square.move_to(start + unit * DVec3::X * j as f64 + unit * DVec3::Y * i as f64);
                 })
             })
             .map(|item| r.insert(item))
@@ -47,9 +45,7 @@ pub mod test_scenes {
             .cartesian_product(0..n)
             .map(|(i, j)| {
                 VItem::from(Square::new(size).with(|square| {
-                    square.put_center_on(
-                        start + unit * DVec3::X * j as f64 + unit * DVec3::Y * i as f64,
-                    );
+                    square.move_to(start + unit * DVec3::X * j as f64 + unit * DVec3::Y * i as f64);
                 }))
             })
             .map(|item| (r.insert(item.clone()), item))
@@ -58,9 +54,7 @@ pub mod test_scenes {
             .cartesian_product(0..n)
             .map(|(i, j)| {
                 VItem::from(Circle::new(size / 2.0).with(|circle| {
-                    circle.put_center_on(
-                        start + unit * DVec3::X * j as f64 + unit * DVec3::Y * i as f64,
-                    );
+                    circle.move_to(start + unit * DVec3::X * j as f64 + unit * DVec3::Y * i as f64);
                 }))
             })
             .collect::<Vec<_>>();
@@ -68,8 +62,7 @@ pub mod test_scenes {
             .into_iter()
             .zip(circles)
             .for_each(|((r_square, item), circle)| {
-                r.timeline_mut(r_square)
-                    .play(item.clone().transform_to(circle));
+                r.timeline_mut(r_square).play(item.clone().morph_to(circle));
             });
     }
 }

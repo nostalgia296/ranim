@@ -1,5 +1,5 @@
 use ranim::{
-    anims::transform::TransformAnim,
+    anims::morph::MorphAnim,
     color::{HueDirection, palettes::manim},
     glam::dvec3,
     items::vitem::geometry::Rectangle,
@@ -34,8 +34,8 @@ fn hanoi(r: &mut RanimScene, n: usize) {
         .into_iter()
         .map(|i: i32| {
             Rectangle::new(rod_width, rod_height).with(|rect| {
-                rect.set_color(manim::GREY_C).put_anchor_on(
-                    Anchor::edge(0, -1, 0),
+                rect.set_color(manim::GREY_C).move_anchor_to(
+                    AabbPoint(dvec3(0.0, -1.0, 0.0)),
                     dvec3(i as f64 * rod_section_width, -4.0, 0.0),
                 );
             })
@@ -54,9 +54,9 @@ fn hanoi(r: &mut RanimScene, n: usize) {
                 let color =
                     manim::RED_D.lerp(manim::BLUE_D, factor as f32, HueDirection::Increasing);
                 rect.stroke_width = 0.0;
-                rect.set_color(color).put_anchor_on(
-                    Anchor::edge(0, -1, 0),
-                    dvec3(-rod_section_width, -4.0 + disk_height * i as f64, 0.0),
+                rect.set_color(color).move_anchor_to(
+                    AabbPoint(dvec3(0.0, -1.0, 0.0)),
+                    dvec3(-rod_section_width, -4.0 + disk_height * i as f64, 0.001),
                 );
             });
             (r.insert(disk.clone()), disk)
@@ -75,14 +75,14 @@ fn hanoi(r: &mut RanimScene, n: usize) {
         {
             let (timeline, disk) = r.timeline_mut(&mut r_disk);
             timeline.play(
-                disk.transform(|data| {
+                disk.morph(|data| {
                     data.shift(dvec3(0.0, 3.0 - top_src, 0.0));
                 })
                 .with_duration(anim_duration)
                 .with_rate_func(ease_in_quad),
             );
             timeline.play(
-                disk.transform(|data| {
+                disk.morph(|data| {
                     data.shift(dvec3(
                         (idx_dst as f64 - idx_src as f64) * rod_section_width,
                         0.0,
@@ -93,7 +93,7 @@ fn hanoi(r: &mut RanimScene, n: usize) {
                 .with_rate_func(linear),
             );
             timeline.play(
-                disk.transform(|data| {
+                disk.morph(|data| {
                     data.shift(dvec3(0.0, top_dst - 3.0, 0.0));
                 })
                 .with_duration(anim_duration)
@@ -109,13 +109,13 @@ fn hanoi(r: &mut RanimScene, n: usize) {
 }
 
 #[scene]
-#[output(dir = "hanoi")]
+#[output(dir = "./output/hanoi")]
 fn hanoi_5(r: &mut RanimScene) {
     hanoi(r, 5);
 }
 
 #[scene(name = "hanoi")]
-#[output(dir = "hanoi")]
+#[output(dir = "./output/hanoi")]
 fn hanoi_10(r: &mut RanimScene) {
     hanoi(r, 10);
 }

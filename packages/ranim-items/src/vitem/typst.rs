@@ -22,12 +22,18 @@ use typst::{
 use typst_kit::fonts::{FontSearcher, Fonts};
 
 use crate::vitem::{VItem, svg::SvgItem};
+use ranim_core::Extract;
+use ranim_core::traits::Interpolatable;
 use ranim_core::{
-    Extract, color,
+    anchor::Aabb,
+    color,
     components::width::Width,
     core_item::CoreItem,
     glam,
-    traits::{Anchor, *},
+    traits::{
+        Alignable, FillColor, Opacity, RotateTransform, ScaleTransform, ShiftTransform,
+        StrokeColor, StrokeWidth, With,
+    },
 };
 
 struct TypstLruCache {
@@ -429,29 +435,29 @@ impl Extract for TypstText {
     }
 }
 
-impl BoundingBox for TypstText {
-    fn get_bounding_box(&self) -> [glam::DVec3; 3] {
-        self.vitems.get_bounding_box()
+impl Aabb for TypstText {
+    fn aabb(&self) -> [glam::DVec3; 2] {
+        self.vitems.aabb()
     }
 }
 
-impl Shift for TypstText {
+impl ShiftTransform for TypstText {
     fn shift(&mut self, shift: glam::DVec3) -> &mut Self {
         self.vitems.shift(shift);
         self
     }
 }
 
-impl Rotate for TypstText {
-    fn rotate_by_anchor(&mut self, angle: f64, axis: glam::DVec3, anchor: Anchor) -> &mut Self {
-        self.vitems.rotate_by_anchor(angle, axis, anchor);
+impl RotateTransform for TypstText {
+    fn rotate_on_axis(&mut self, axis: glam::DVec3, angle: f64) -> &mut Self {
+        self.vitems.rotate_on_axis(axis, angle);
         self
     }
 }
 
-impl Scale for TypstText {
-    fn scale_by_anchor(&mut self, scale: glam::DVec3, anchor: Anchor) -> &mut Self {
-        self.vitems.scale_by_anchor(scale, anchor);
+impl ScaleTransform for TypstText {
+    fn scale(&mut self, scale: glam::DVec3) -> &mut Self {
+        self.vitems.scale(scale);
         self
     }
 }
@@ -512,10 +518,12 @@ impl StrokeWidth for TypstText {
 pub fn get_typst_element(svg: &str) -> String {
     let re = Regex::new(r"<path[^>]*(?:>.*?<\/path>|\/>)").unwrap();
     let removed_bg = re.replace(svg.as_bytes(), b"");
+    let re = Regex::new(r#"\s+(?:viewBox|width|height)="[^"]*""#).unwrap();
+    let removed_size = re.replace_all(&removed_bg, b"");
 
     // println!("{}", String::from_utf8_lossy(&output));
     // println!("{}", String::from_utf8_lossy(&removed_bg));
-    String::from_utf8_lossy(&removed_bg).to_string()
+    String::from_utf8_lossy(&removed_size).to_string()
 }
 
 /// Compiles typst code to SVG string by spawning a typst process
@@ -539,7 +547,7 @@ pub fn compile_typst_code(typst_code: &str) -> String {
     let output = child.wait_with_output().unwrap().stdout;
     let output = String::from_utf8_lossy(&output);
 
-    get_typst_element(&output)
+    output.to_string()
 }
 
 #[cfg(test)]
@@ -580,6 +588,7 @@ mod tests {
 
         let start = Instant::now();
         let svg = typst_svg::svg_merged(&document, Abs::pt(2.0));
+        println!("{svg}");
         println!("svg output: {:?}", start.elapsed());
 
         let start = Instant::now();
@@ -588,6 +597,36 @@ mod tests {
 
         println!("{res}");
         // println!("{}", typst_svg!(source))
+    }
+
+    ///
+    /// ```
+    /// <svg class="typst-doc" viewBox="0 0 11.483999999999998 11" width="11.483999999999998pt" height="11pt" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:h5="http://www.w3.org/1999/xhtml">
+    ///    <path class="typst-shape" fill="#ffffff" fill-rule="nonzero" d="M 0 0v 11 h 11.484 v -11 Z "/>
+    ///    <g>
+    ///        <g class="typst-text" transform="matrix(1 0 0 -1 0 11)">
+    ///            <use xlink:href="#gB5279FC30F2C6542A76CE0CDC73F9462" x="0" y="0" fill="#000000" fill-rule="nonzero"/>
+    ///            <use xlink:href="#gC5A0A6F735BE491513D9F5FD3BD367ED" x="6.457" y="0" fill="#000000" fill-rule="nonzero"/>
+    ///        </g>
+    ///    </g>
+    /// ```
+    /// ```
+    /// <svg class="typst-doc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:h5="http://www.w3.org/1999/xhtml">
+    /// <g>
+    ///     <g class="typst-text" transform="matrix(1 0 0 -1 0 11)">
+    ///         <use xlink:href="#gB5279FC30F2C6542A76CE0CDC73F9462" x="0" y="0" fill="#000000" fill-rule="nonzero"/>
+    ///         <use xlink:href="#gC5A0A6F735BE491513D9F5FD3BD367ED" x="6.457" y="0" fill="#000000" fill-rule="nonzero"/>
+    ///     </g>
+    /// </g>
+    /// ```
+    #[test]
+    fn foo_page() {
+        let text = r#"Ra"#;
+        let res = compile_typst_code(text);
+        println!("{res}");
+
+        let res = typst_svg(text);
+        println!("{res}");
     }
 
     #[test]

@@ -1,9 +1,8 @@
 use std::f64::consts::PI;
 
 use ranim::{
-    anims::{creation::WritingAnim, fading::FadingAnim, transform::TransformAnim},
+    anims::{creation::WritingAnim, fading::FadingAnim, morph::MorphAnim},
     color::palettes::manim,
-    glam::DVec3,
     items::vitem::{
         VItem,
         geometry::{Circle, Square},
@@ -12,14 +11,14 @@ use ranim::{
 };
 
 #[scene]
-#[output(dir = "hello_ranim")]
+#[output(dir = "./output/hello_ranim")]
 fn hello_ranim(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
 
     let mut square = Square::new(2.0);
     square.set_color(manim::BLUE_C);
 
-    let r_square = r.new_timeline();
+    let r_square = r.insert_empty();
     {
         let t = r.timeline_mut(r_square);
         t.play(square.clone().fade_in());
@@ -28,12 +27,14 @@ fn hello_ranim(r: &mut RanimScene) {
     let mut circle = Circle::new(2.0);
     circle
         .set_color(manim::RED_C)
-        .rotate(-PI / 4.0 + PI, DVec3::Z);
+        .with_origin(AabbPoint::CENTER, |x| {
+            x.rotate_on_z(PI / 4.0 - PI);
+        });
 
     let mut vitem = VItem::from(square);
     {
         let t = r.timeline_mut(r_square);
-        t.play(vitem.transform_to(circle.into()));
+        t.play(vitem.morph_to(circle.into()));
         t.forward(1.0);
         t.play(vitem.clone().unwrite());
         t.play(vitem.write());
@@ -50,7 +51,7 @@ fn hello_ranim_chained(r: &mut RanimScene) {
         square.set_color(manim::BLUE_C);
     });
 
-    let r_square = r.new_timeline();
+    let r_square = r.insert_empty();
     {
         let t = r.timeline_mut(r_square);
         t.play(square.clone().fade_in());
@@ -59,12 +60,14 @@ fn hello_ranim_chained(r: &mut RanimScene) {
     let circle = Circle::new(2.0).with(|circle| {
         circle
             .set_color(manim::RED_C)
-            .rotate(-PI / 4.0 + PI, DVec3::Z);
+            .with_origin(AabbPoint::CENTER, |x| {
+                x.rotate_on_z(-PI / 4.0 + PI);
+            });
     });
 
     let mut vitem = VItem::from(square);
     r.timeline_mut(r_square)
-        .play(vitem.transform_to(circle.into()))
+        .play(vitem.morph_to(circle.into()))
         .forward(1.0)
         .play(vitem.clone().unwrite())
         .play(vitem.write())

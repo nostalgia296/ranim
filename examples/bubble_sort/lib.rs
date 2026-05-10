@@ -1,8 +1,8 @@
 use rand::{SeedableRng, seq::SliceRandom};
 use ranim::{
-    anims::transform::TransformAnim,
+    anims::morph::MorphAnim,
     color::palettes::manim,
-    glam::{DVec3, dvec2},
+    glam::{DVec3, dvec2, dvec3},
     items::vitem::geometry::Rectangle,
     prelude::*,
     utils::rate_functions::linear,
@@ -36,21 +36,21 @@ fn bubble_sort(r: &mut RanimScene, num: usize) {
                 rect.stroke_width = 0.0;
                 rect.set_fill_color(manim::WHITE.with_alpha(0.5))
                     .scale(DVec3::splat(0.8))
-                    .put_anchor_on(Anchor::edge(0, -1, 0), target_bc_coord);
+                    .move_anchor_to(AabbPoint(dvec3(0.0, -1.0, 0.0)), target_bc_coord);
             });
             (r.insert(rect.clone()), rect)
         })
         .collect::<Vec<_>>();
 
     let anim_highlight = |rect: &mut Rectangle| {
-        rect.transform(|data| {
+        rect.morph(|data| {
             data.set_fill_color(manim::BLUE_C.with_alpha(0.5));
         })
         .with_duration(anim_step_duration)
         .with_rate_func(linear)
     };
     let anim_unhighlight = |rect: &mut Rectangle| {
-        rect.transform(|data| {
+        rect.morph(|data| {
             data.set_fill_color(manim::WHITE.with_alpha(0.5));
         })
         .with_duration(anim_step_duration)
@@ -65,7 +65,7 @@ fn bubble_sort(r: &mut RanimScene, num: usize) {
             .zip(swap_shift.iter())
             .for_each(|((timeline, rect), shift)| {
                 timeline.play(
-                    rect.transform(|data| {
+                    rect.morph(|data| {
                         data.shift(*shift);
                     })
                     .with_duration(anim_step_duration)
@@ -105,13 +105,13 @@ fn bubble_sort(r: &mut RanimScene, num: usize) {
 }
 
 #[scene]
-#[output(dir = "bubble_sort")]
+#[output(dir = "./output/bubble_sort")]
 fn bubble_sort_10(r: &mut RanimScene) {
     bubble_sort(r, 10);
 }
 
 #[scene(name = "bubble_sort")]
-#[output(dir = "bubble_sort")]
+#[output(dir = "./output/bubble_sort")]
 fn bubble_sort_100(r: &mut RanimScene) {
     bubble_sort(r, 100);
 }

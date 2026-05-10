@@ -6,7 +6,7 @@ use ranim::{
 };
 
 #[scene]
-#[output(dir = "palettes")]
+#[output(dir = "./output/palettes")]
 fn palettes(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
     let frame_size = dvec2(8.0 * 16.0 / 9.0, 8.0);
@@ -40,8 +40,8 @@ fn palettes(r: &mut RanimScene) {
                 Rectangle::new(w_step as f64, h_step as f64).with(|rect| {
                     rect.stroke_width = 0.0;
 
-                    rect.set_color(*color).put_anchor_on(
-                        Anchor::edge(-1, -1, 0),
+                    rect.set_color(*color).move_anchor_to(
+                        AabbPoint(dvec3(-1.0, -1.0, 0.0)),
                         padded_frame_start.extend(0.0) + dvec3(x, y, 0.0),
                     );
                 })

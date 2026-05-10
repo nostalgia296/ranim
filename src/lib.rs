@@ -21,7 +21,6 @@
     html_logo_url = "https://raw.githubusercontent.com/AzurIce/ranim/refs/heads/main/assets/ranim.svg",
     html_favicon_url = "https://raw.githubusercontent.com/AzurIce/ranim/refs/heads/main/assets/ranim.svg"
 )]
-#![feature(downcast_unchecked)]
 
 #[cfg(feature = "anims")]
 pub use ranim_anims as anims;
@@ -40,8 +39,16 @@ pub mod utils {
     pub use ranim_core::utils::*;
 }
 
-pub use core::{glam, inventory};
-pub use ranim_core::{Output, RanimScene, Scene, SceneConfig, SceneConstructor};
+/// Scene types for dylib / inventory registration and runtime use.
+mod link_magic;
+pub use link_magic::*;
+
+/// Scene description types (Scene, Output, OutputFormat, etc.)
+mod scene;
+pub use scene::*;
+
+pub use core::glam;
+pub use ranim_core::RanimScene;
 
 /// The preludes
 pub mod prelude {

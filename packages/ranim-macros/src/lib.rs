@@ -64,7 +64,9 @@ struct OutputDef {
     height: u32,
     fps: u32,
     save_frames: bool,
+    name: Option<String>,
     dir: String,
+    format: Option<String>,
 }
 
 // MARK: scene
@@ -86,37 +88,52 @@ pub fn scene(args: TokenStream, input: TokenStream) -> TokenStream {
     // 场景名称
     let scene_name = attrs.name.unwrap_or_else(|| fn_name.to_string());
 
-    // SceneConfig
+    // StaticSceneConfig
     let clear_color = attrs.clear_color.unwrap_or("#333333ff".to_string());
     let scene_config = quote! {
-        #ranim::SceneConfig {
+        #ranim::StaticSceneConfig {
             clear_color: #clear_color,
         }
     };
 
-    // Output 列表
+    // StaticOutput 列表
     let mut outputs = Vec::new();
     for OutputDef {
         width,
         height,
         fps,
         save_frames,
+        name,
         dir,
+        format,
     } in attrs.outputs
     {
+        let name_token = match name.as_deref() {
+            Some(n) if !n.is_empty() => quote! { Some(#n) },
+            _ => quote! { None },
+        };
+        let format_token = match format.as_deref() {
+            Some("mp4") | None => quote! { #ranim::OutputFormat::Mp4 },
+            Some("webm") => quote! { #ranim::OutputFormat::Webm },
+            Some("mov") => quote! { #ranim::OutputFormat::Mov },
+            Some("gif") => quote! { #ranim::OutputFormat::Gif },
+            Some(other) => panic!("unknown output format: {other:?}"),
+        };
         outputs.push(quote! {
-            #ranim::Output {
+            #ranim::StaticOutput {
                 width: #width,
                 height: #height,
                 fps: #fps,
                 save_frames: #save_frames,
+                name: #name_token,
                 dir: #dir,
+                format: #format_token,
             }
         });
     }
     if outputs.is_empty() {
         outputs.push(quote! {
-            #ranim::Output::DEFAULT
+            #ranim::StaticOutput::DEFAULT
         });
     }
 
@@ -132,43 +149,42 @@ pub fn scene(args: TokenStream, input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    let static_output_name = syn::Ident::new(
-        &format!("__SCENE_{}_OUTPUTS", fn_name.to_string().to_uppercase()),
-        fn_name.span(),
-    );
-    let static_name = syn::Ident::new(
-        &format!("__SCENE_{}", fn_name.to_string().to_uppercase()),
-        fn_name.span(),
-    );
-    let static_scene_name = syn::Ident::new(&format!("{fn_name}_scene"), fn_name.span());
+    let static_output_name = syn::Ident::new("__OUTPUTS", fn_name.span());
+    let static_scene_name = syn::Ident::new("__SCENE", fn_name.span());
 
     let output_cnt = outputs.len();
 
     let scene = quote! {
-        #ranim::Scene {
+        #ranim::StaticScene {
             name: #scene_name,
-            constructor: #fn_name,
+            constructor: super::#fn_name,
             config: #scene_config,
             outputs: &#static_output_name,
         }
     };
 
-    // 构造 Scene 并塞进分布式切片
+    // ANCHOR: SCENE_MACRO
     let expanded = quote! {
         #doc
         #(#doc_attrs)*
         #vis fn #fn_name(r: &mut #ranim::RanimScene) #fn_body
 
-        static #static_output_name: [#ranim::Output; #output_cnt] = [#(#outputs),*];
         #[doc(hidden)]
-        static #static_name: #ranim::Scene = #scene;
-        #ranim::inventory::submit!{
-            #scene
-        }
+        #vis mod #fn_name {
+            /// The static outputs.
+            pub static #static_output_name: [#ranim::StaticOutput; #output_cnt] = [#(#outputs),*];
+            /// The static scene descriptor.
+            pub static #static_scene_name: #ranim::StaticScene = #scene;
+            #ranim::inventory::submit!{
+                #scene
+            }
 
-        #[allow(non_upper_case_globals)]
-        #vis static #static_scene_name: &'static #ranim::Scene = &#static_name;
+            pub fn scene() -> #ranim::Scene {
+                #ranim::Scene::from(&#static_scene_name)
+            }
+        }
     };
+    // ANCHOR_END: SCENE_MACRO
 
     TokenStream::from(expanded)
 }
@@ -178,7 +194,8 @@ pub fn scene(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Default: 1920x1080 60fps, save_frames = false
 ///
 /// Available attributes:
-/// - `pixel_size`: (width, height)
+/// - `width`: output width in pixels
+/// - `height`: output height in pixels
 /// - `fps`: frames per second
 /// - `save_frames`: save frames to disk
 /// - `dir`: directory for output
@@ -384,60 +401,55 @@ pub fn derive_interpolatable(input: TokenStream) -> TokenStream {
     )
 }
 
-#[proc_macro_derive(BoundingBox)]
-pub fn derive_bounding_box(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(ShiftTransform)]
+pub fn derive_shift_impl(input: TokenStream) -> TokenStream {
     let core = ranim_core_path();
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = &input.ident;
-    let generics = &input.generics;
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
-    let fields = match &input.data {
-        Data::Struct(data) => &data.fields,
-        _ => panic!("Can only be derived for structs"),
-    };
-
-    let field_positions = get_field_positions(fields)
-        .ok_or("cannot get field from unit struct")
-        .unwrap();
-
-    let expanded = quote! {
-        impl #impl_generics #core::traits::BoundingBox for #name #ty_generics #where_clause {
-            fn get_bounding_box(&self) -> [DVec3; 3] {
-                let [min, max] = [#(self.#field_positions.get_bounding_box(), )*]
-                    .into_iter()
-                    .map(|[min, _, max]| [min, max])
-                    .reduce(|[acc_min, acc_max], [min, max]| [acc_min.min(min), acc_max.max(max)])
-                    .unwrap();
-                [min, (min + max) / 2.0, max]
+    impl_derive(
+        input,
+        quote! {#core::traits::ShiftTransform},
+        |field_positions| {
+            quote! {
+                fn shift(&mut self, shift: #core::glam::DVec3) -> &mut Self {
+                    #(self.#field_positions.shift(shift);)*
+                    self
+                }
             }
-        }
-    };
-
-    TokenStream::from(expanded)
+        },
+    )
 }
 
-#[proc_macro_derive(Position)]
-pub fn derive_position(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(RotateTransform)]
+pub fn derive_rotate_impl(input: TokenStream) -> TokenStream {
     let core = ranim_core_path();
-    impl_derive(input, quote! {#core::traits::Position}, |field_positions| {
-        quote! {
-            fn shift(&mut self, shift: DVec3) -> &mut Self {
-                #(self.#field_positions.shift(shift);)*
-                self
+    impl_derive(
+        input,
+        quote! {#core::traits::RotateTransform},
+        |field_positions| {
+            quote! {
+                fn rotate_on_axis(&mut self, axis: #core::glam::DVec3, angle: f64) -> &mut Self {
+                    #(self.#field_positions.rotate_on_axis(axis, angle);)*
+                    self
+                }
             }
+        },
+    )
+}
 
-            fn rotate_by_anchor(&mut self, angle: f64, axis: #core::glam::DVec3, anchor: #core::components::Anchor) -> &mut Self {
-                #(self.#field_positions.rotate_by_anchor(angle, axis, anchor);)*
-                self
+#[proc_macro_derive(ScaleTransform)]
+pub fn derive_scale_impl(input: TokenStream) -> TokenStream {
+    let core = ranim_core_path();
+    impl_derive(
+        input,
+        quote! {#core::traits::ScaleTransform},
+        |field_positions| {
+            quote! {
+                fn scale(&mut self, scale: #core::glam::DVec3) -> &mut Self {
+                    #(self.#field_positions.scale(scale);)*
+                    self
+                }
             }
-
-            fn scale_by_anchor(&mut self, scale: #core::glam::DVec3, anchor: #core::components::Anchor) -> &mut Self {
-                #(self.#field_positions.scale_by_anchor(scale, anchor);)*
-                self
-            }
-        }
-    })
+        },
+    )
 }
 
 #[proc_macro_derive(PointsFunc)]

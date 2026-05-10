@@ -8,7 +8,6 @@
     html_logo_url = "https://raw.githubusercontent.com/AzurIce/ranim/refs/heads/main/assets/ranim.svg",
     html_favicon_url = "https://raw.githubusercontent.com/AzurIce/ranim/refs/heads/main/assets/ranim.svg"
 )]
-#![feature(decl_macro)]
 pub mod animation;
 /// Color
 pub mod color;
@@ -25,7 +24,10 @@ pub mod core_item;
 /// The [`core_item::CoreItem`] store
 pub mod store;
 
+pub mod anchor;
+
 pub use glam;
+pub use num;
 
 /// Prelude
 pub mod prelude {
@@ -38,8 +40,6 @@ pub mod prelude {
 }
 
 use crate::{animation::StaticAnim, core_item::CoreItem, timeline::Timeline};
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 
 /// Extract a [`Extract::Target`] from reference.
 pub trait Extract {
@@ -72,122 +72,11 @@ use tracing::trace;
 
 use std::fmt::Debug;
 
-// MARK: Dylib part
-#[doc(hidden)]
-#[derive(Clone)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-pub struct Scene {
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(skip))]
-    pub name: &'static str,
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(skip))]
-    pub constructor: fn(&mut RanimScene),
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(skip))]
-    pub config: SceneConfig,
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(skip))]
-    pub outputs: &'static [Output],
-}
-
-pub use inventory;
-
-inventory::collect!(Scene);
-
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-pub extern "C" fn get_scene(idx: usize) -> *const Scene {
-    inventory::iter::<Scene>().skip(idx).take(1).next().unwrap()
-}
-
-#[doc(hidden)]
-#[unsafe(no_mangle)]
-pub extern "C" fn scene_cnt() -> usize {
-    inventory::iter::<Scene>().count()
-}
-
-/// Return a scene with matched name
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-pub fn find_scene(name: &str) -> Option<Scene> {
-    inventory::iter::<Scene>().find(|s| s.name == name).cloned()
-}
-
-/// Scene config
-#[derive(Debug, Clone)]
-pub struct SceneConfig {
-    /// The clear color
-    pub clear_color: &'static str,
-}
-
-impl Default for SceneConfig {
-    fn default() -> Self {
-        Self {
-            clear_color: "#333333ff",
-        }
-    }
-}
-
-/// The output of a scene
-#[derive(Debug, Clone)]
-pub struct Output {
-    /// The width of the output texture in pixels.
-    pub width: u32,
-    /// The height of the output texture in pixels.
-    pub height: u32,
-    /// The frame rate of the output video.
-    pub fps: u32,
-    /// Whether to save the frames.
-    pub save_frames: bool,
-    /// The directory to save the output
-    ///
-    /// Related to the `output` folder, Or absolute.
-    pub dir: &'static str,
-}
-
-impl Default for Output {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-impl Output {
-    /// 1920x1080 60fps save_frames=false dir="./"
-    pub const DEFAULT: Self = Self {
-        width: 1920,
-        height: 1080,
-        fps: 60,
-        save_frames: false,
-        dir: "./",
-    };
-}
-
 /// TimeMark
 #[derive(Debug, Clone)]
 pub enum TimeMark {
     /// Capture a picture with a name
     Capture(String),
-}
-
-// MARK: SceneConstructor
-// ANCHOR: SceneConstructor
-/// A scene constructor
-///
-/// It can be a simple fn pointer of `fn(&mut RanimScene)`,
-/// or any type implements `Fn(&mut RanimScene) + Send + Sync`.
-pub trait SceneConstructor: Send + Sync {
-    /// The construct logic
-    fn construct(&self, r: &mut RanimScene);
-
-    /// Use the constructor to build a [`SealedRanimScene`]
-    fn build_scene(&self) -> SealedRanimScene {
-        let mut scene = RanimScene::new();
-        self.construct(&mut scene);
-        scene.seal()
-    }
-}
-// ANCHOR_END: SceneConstructor
-
-impl<F: Fn(&mut RanimScene) + Send + Sync> SceneConstructor for F {
-    fn construct(&self, r: &mut RanimScene) {
-        self(r);
-    }
 }
 
 /// The id of a timeline.
@@ -203,10 +92,8 @@ impl TimelineId {
 
 // MARK: RanimScene
 /// The main struct that offers the ranim's API, and encodes animations
-/// The rabjects insert to it will hold a reference to it, so it has interior mutability
 #[derive(Default)]
 pub struct RanimScene {
-    // Timeline<CameraFrame> or Timeline<Item>
     pub(crate) timelines: Vec<Timeline>,
     pub(crate) time_marks: Vec<(f64, TimeMark)>,
 }
@@ -228,21 +115,19 @@ impl RanimScene {
         Self::default()
     }
 
-    /// Create a new timeline.
-    pub fn new_timeline(&mut self) -> TimelineId {
-        self.new_timeline_with(|_| ())
+    /// Insert an empty timeline.
+    pub fn insert_empty(&mut self) -> TimelineId {
+        self.insert_empty_at(0.0)
     }
 
-    /// Create a new timeline and call `f` on it.
-    pub fn new_timeline_with(&mut self, f: impl FnOnce(&mut Timeline)) -> TimelineId {
-        let id = TimelineId(self.timelines.len());
-        let mut timeline = Timeline::new();
-        f(&mut timeline);
-        self.timelines.push(timeline);
-        id
+    /// Insert an empty timeline and forward it to the given sec.
+    pub fn insert_empty_at(&mut self, sec: f64) -> TimelineId {
+        self.insert_with(|t| {
+            t.forward_to(sec);
+        })
     }
 
-    /// Create a new timeline and play [`StaticAnim::show`] on it at `0.0` sec.
+    /// Insert a timeline at `0.0` sec and play [`StaticAnim::show`] on it.
     pub fn insert<T: Extract<Target = CoreItem> + Clone + 'static>(
         &mut self,
         item: T,
@@ -250,16 +135,25 @@ impl RanimScene {
         self.insert_at(item, 0.0)
     }
 
-    /// Create a new timeline and play [`StaticAnim::show`] on it at the given sec.
+    /// Insert a timeline at the given sec and play [`StaticAnim::show`] on it.
     pub fn insert_at<T: Extract<Target = CoreItem> + Clone + 'static>(
         &mut self,
         item: T,
         sec: f64,
     ) -> TimelineId {
-        self.new_timeline_with(|t| {
+        self.insert_with(|t| {
             t.forward_to(sec);
             t.play(item.show());
         })
+    }
+
+    /// Insert a empty timeline and call `f` on it.
+    pub fn insert_with(&mut self, mut f: impl FnMut(&mut Timeline)) -> TimelineId {
+        let id = TimelineId(self.timelines.len());
+        let mut timeline = Timeline::new();
+        f(&mut timeline);
+        self.timelines.push(timeline);
+        id
     }
 
     /// Get reference of all timelines
@@ -373,8 +267,8 @@ impl SealedRanimScene {
 ///
 /// | Index Type | Output Type |
 /// |------------|-------------|
-/// |   `usize`    | `Option<&NeoItemTimeline>` and `Option<&mut NeoItemTimeline>` |
-/// |   `TimelineId`    | `&NeoItemTimeline` and `&mut NeoItemTimeline` |
+/// |   `usize`    | `Option<&Timeline>` and `Option<&mut Timeline>` |
+/// |   `TimelineId`    | `&Timeline` and `&mut Timeline` |
 /// |   `TQ: TimelineQuery<'a>`    | `TQ::RessembleResult` and `TQ::RessembleMutResult` |
 /// |   `[TQ: TimelineQuery<'a>; N]`    | `[TQ::RessembleResult; N]` and `Result<[TQ::RessembleMutResult; N], TimelineIndexMutError>` |
 pub trait TimelineIndex<'a> {

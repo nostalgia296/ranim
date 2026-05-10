@@ -1,23 +1,27 @@
-use ranim_core::{Extract, color, core_item::CoreItem, glam, traits::Anchor};
+use std::f64::consts::{PI, TAU};
 
-use color::{AlphaColor, Srgb};
-use glam::{DVec3, dvec3};
-use itertools::Itertools;
-
-use crate::vitem::{DEFAULT_STROKE_WIDTH, Proj};
-use ranim_core::traits::{
-    Alignable, BoundingBox, FillColor, Opacity, Rotate, Scale, Shift, StrokeColor, StrokeWidth,
-    With,
+use ranim_core::{
+    Extract,
+    anchor::{Aabb, AabbPoint, Locate},
+    color,
+    core_item::CoreItem,
+    glam::{DVec2, DVec3, dvec2, dvec3},
+    traits::{Discard, RotateTransform, ScaleTransform, ShiftTransform, ShiftTransformExt},
 };
 
-use crate::vitem::VItem;
+use color::{AlphaColor, Srgb};
+use itertools::Itertools;
+
+use crate::vitem::{DEFAULT_STROKE_WIDTH, VItem, geometry::Circle};
+use ranim_core::core_item::vitem::Basis2d;
+use ranim_core::traits::{Alignable, FillColor, Opacity, StrokeColor, StrokeWidth, With};
 
 // MARK: ### Square ###
 /// A Square
 #[derive(Clone, Debug, ranim_macros::Interpolatable)]
 pub struct Square {
-    /// Projection
-    pub proj: Proj,
+    /// Basis
+    pub basis: Basis2d,
     /// Center
     pub center: DVec3,
     /// Size
@@ -35,7 +39,7 @@ impl Square {
     /// Constructor
     pub fn new(size: f64) -> Self {
         Self {
-            proj: Proj::default(),
+            basis: Basis2d::default(),
             center: dvec3(0.0, 0.0, 0.0),
             size,
 
@@ -46,53 +50,52 @@ impl Square {
     }
     /// Scale the square by the given scale, with the given anchor as the center.
     ///
-    /// Note that this accepts a `f64` scale dispite of [`Scale`]'s `DVec3`,
+    /// Note that this accepts a `f64` scale dispite of [`ScaleTransform`]'s `DVec3`,
     /// because this keeps the square a square.
     pub fn scale(&mut self, scale: f64) -> &mut Self {
-        self.scale_by_anchor(scale, Anchor::CENTER)
+        self.scale_at(scale, AabbPoint::CENTER)
     }
     /// Scale the square by the given scale, with the given anchor as the center.
     ///
-    /// Note that this accepts a `f64` scale dispite of [`Scale`]'s `DVec3`,
+    /// Note that this accepts a `f64` scale dispite of [`ScaleTransform`]'s `DVec3`,
     /// because this keeps the square a square.
-    pub fn scale_by_anchor(&mut self, scale: f64, anchor: Anchor) -> &mut Self {
-        let anchor = Anchor::Point(match anchor {
-            Anchor::Point(point) => point,
-            Anchor::Edge(edge) => self.get_bounding_box_point(edge),
-        });
+    pub fn scale_at<T>(&mut self, scale: f64, anchor: T) -> &mut Self
+    where
+        T: Locate<Self>,
+    {
+        let anchor = anchor.locate(self);
         self.size *= scale;
-        self.center.scale_by_anchor(DVec3::splat(scale), anchor);
+        self.center
+            .shift(-anchor)
+            .scale(DVec3::splat(scale))
+            .shift(anchor);
         self
     }
 }
 
 // MARK: Traits impl
-impl BoundingBox for Square {
-    fn get_bounding_box(&self) -> [DVec3; 3] {
-        let (u, v) = self.proj.basis();
+impl Aabb for Square {
+    fn aabb(&self) -> [DVec3; 2] {
+        let (u, v) = self.basis.uv();
         [
             self.center + self.size / 2.0 * (u + v),
             self.center - self.size / 2.0 * (u + v),
         ]
-        .get_bounding_box()
+        .aabb()
     }
 }
 
-impl Shift for Square {
+impl ShiftTransform for Square {
     fn shift(&mut self, shift: DVec3) -> &mut Self {
         self.center.shift(shift);
         self
     }
 }
 
-impl Rotate for Square {
-    fn rotate_by_anchor(&mut self, angle: f64, axis: DVec3, anchor: Anchor) -> &mut Self {
-        let anchor = Anchor::Point(match anchor {
-            Anchor::Point(point) => point,
-            Anchor::Edge(edge) => self.get_bounding_box_point(edge),
-        });
-        self.center.rotate_by_anchor(angle, axis, anchor);
-        self.proj.rotate(angle, axis);
+impl RotateTransform for Square {
+    fn rotate_on_axis(&mut self, axis: DVec3, angle: f64) -> &mut Self {
+        self.center.rotate_on_axis(axis, angle);
+        self.basis.rotate_on_axis(axis, angle);
         self
     }
 }
@@ -151,24 +154,34 @@ impl Extract for Square {
 impl From<Square> for Rectangle {
     fn from(value: Square) -> Self {
         let Square {
-            proj,
+            basis,
             center,
             size: width,
             stroke_rgba,
             stroke_width,
             fill_rgba,
         } = value;
-        let (u, v) = proj.basis();
-        let p1 = center - width / 2.0 * u + width / 2.0 * v;
-        let p2 = center + width / 2.0 * u - width / 2.0 * v;
+        let (u, v) = basis.uv();
+        let p0 = center - width / 2.0 * u - width / 2.0 * v;
         Rectangle {
-            proj,
-            p1,
-            p2,
+            basis,
+            p0,
+            size: dvec2(width, width),
             stroke_rgba,
             stroke_width,
             fill_rgba,
         }
+    }
+}
+
+impl From<Square> for RegularPolygon {
+    fn from(value: Square) -> Self {
+        RegularPolygon::new(4, value.size / 2.0 * 2.0f64.sqrt()).with(|x| {
+            x.basis = value.basis;
+            x.stroke_rgba = value.stroke_rgba;
+            x.stroke_width = value.stroke_width;
+            x.fill_rgba = value.fill_rgba;
+        })
     }
 }
 
@@ -188,12 +201,12 @@ impl From<Square> for VItem {
 /// Rectangle
 #[derive(Clone, Debug, ranim_macros::Interpolatable)]
 pub struct Rectangle {
-    /// Projection info
-    pub proj: Proj,
-    /// Corner 1
-    pub p1: DVec3,
-    /// Corner 2
-    pub p2: DVec3,
+    /// Basis info
+    pub basis: Basis2d,
+    /// Bottom left corner (minimum)
+    pub p0: DVec3,
+    /// Width and height
+    pub size: DVec2,
 
     /// Stroke rgba
     pub stroke_rgba: AlphaColor<Srgb>,
@@ -208,10 +221,16 @@ impl Rectangle {
     pub fn new(width: f64, height: f64) -> Self {
         let half_width = width / 2.0;
         let half_height = height / 2.0;
+        let p0 = dvec3(-half_width, -half_height, 0.0);
+        let size = dvec2(width, height);
+        Self::from_min_size(p0, size)
+    }
+    /// Construct a rectangle from the bottom-left point (minimum) and size.
+    pub fn from_min_size(p0: DVec3, size: DVec2) -> Self {
         Self {
-            proj: Proj::default(),
-            p1: dvec3(-half_width, half_height, 0.0),
-            p2: dvec3(half_width, -half_height, 0.0),
+            basis: Basis2d::default(),
+            p0,
+            size,
             stroke_rgba: AlphaColor::WHITE,
             stroke_width: DEFAULT_STROKE_WIDTH,
             fill_rgba: AlphaColor::TRANSPARENT,
@@ -219,44 +238,46 @@ impl Rectangle {
     }
     /// Width
     pub fn width(&self) -> f64 {
-        (self.p2 - self.p1).dot(self.proj.basis_u()).abs()
+        self.size.x.abs()
     }
     /// Height
     pub fn height(&self) -> f64 {
-        (self.p2 - self.p1).dot(self.proj.basis_v()).abs()
+        self.size.y.abs()
     }
 }
 
 // MARK: Traits impl
-impl BoundingBox for Rectangle {
-    fn get_bounding_box(&self) -> [DVec3; 3] {
-        [self.p1, self.p2].get_bounding_box()
+impl Aabb for Rectangle {
+    fn aabb(&self) -> [DVec3; 2] {
+        let (u, v) = self.basis.uv();
+        let p1 = self.p0;
+        let p2 = self.p0 + self.size.x * u + self.size.y * v;
+        [p1, p2].aabb()
     }
 }
 
-impl Shift for Rectangle {
+impl ShiftTransform for Rectangle {
     fn shift(&mut self, shift: DVec3) -> &mut Self {
-        self.p1.shift(shift);
-        self.p2.shift(shift);
+        self.p0.shift(shift);
         self
     }
 }
 
-impl Rotate for Rectangle {
-    fn rotate_by_anchor(&mut self, angle: f64, axis: DVec3, anchor: Anchor) -> &mut Self {
-        let anchor = Anchor::Point(anchor.get_pos(self));
-        self.p1.rotate_by_anchor(angle, axis, anchor);
-        self.p2.rotate_by_anchor(angle, axis, anchor);
-        self.proj.rotate(angle, axis);
+impl RotateTransform for Rectangle {
+    fn rotate_on_axis(&mut self, axis: DVec3, angle: f64) -> &mut Self {
+        self.p0.rotate_on_axis(axis, angle);
+        self.basis.rotate_on_axis(axis, angle);
         self
     }
 }
 
-impl Scale for Rectangle {
-    fn scale_by_anchor(&mut self, scale: DVec3, anchor: Anchor) -> &mut Self {
-        let anchor = Anchor::Point(anchor.get_pos(self));
-        self.p1.scale_by_anchor(scale, anchor);
-        self.p2.scale_by_anchor(scale, anchor);
+impl ScaleTransform for Rectangle {
+    fn scale(&mut self, scale: DVec3) -> &mut Self {
+        self.p0.scale(scale);
+        let (u, v) = self.basis.uv();
+        let scale_u = scale.dot(u);
+        let scale_v = scale.dot(v);
+        self.size *= dvec2(scale_u, scale_v);
         self
     }
 }
@@ -307,14 +328,12 @@ impl FillColor for Rectangle {
 // MARK: Conversions
 impl From<Rectangle> for Polygon {
     fn from(value: Rectangle) -> Self {
-        let points = vec![
-            value.p1,
-            value.p1 - value.proj.basis_v() * value.height(),
-            value.p2,
-            value.p2 + value.proj.basis_v() * value.height(),
-        ];
+        let p0 = value.p0;
+        let (u, v) = value.basis.uv();
+        let DVec2 { x: w, y: h } = value.size;
+        let points = vec![p0, p0 + u * w, p0 + u * w + v * h, p0 + v * h];
         Polygon {
-            proj: value.proj,
+            basis: value.basis,
             points,
             stroke_rgba: value.stroke_rgba,
             stroke_width: value.stroke_width,
@@ -340,8 +359,8 @@ impl Extract for Rectangle {
 /// A Polygon with uniform stroke and fill
 #[derive(Clone, Debug, ranim_macros::Interpolatable)]
 pub struct Polygon {
-    /// Projection info
-    pub proj: Proj,
+    /// Basis info
+    pub basis: Basis2d,
     /// Corner points
     pub points: Vec<DVec3>,
     /// Stroke rgba
@@ -356,7 +375,7 @@ impl Polygon {
     /// Constructor
     pub fn new(points: Vec<DVec3>) -> Self {
         Self {
-            proj: Proj::default(),
+            basis: Basis2d::default(),
             points,
             stroke_rgba: AlphaColor::WHITE,
             stroke_width: DEFAULT_STROKE_WIDTH,
@@ -366,32 +385,41 @@ impl Polygon {
 }
 
 // MARK: Traits impl
-impl BoundingBox for Polygon {
-    fn get_bounding_box(&self) -> [DVec3; 3] {
-        self.points.get_bounding_box()
+impl Aabb for Polygon {
+    fn aabb(&self) -> [DVec3; 2] {
+        self.points.aabb()
     }
 }
 
-impl Shift for Polygon {
+impl ShiftTransform for Polygon {
     fn shift(&mut self, shift: DVec3) -> &mut Self {
         self.points.shift(shift);
         self
     }
 }
 
-impl Rotate for Polygon {
-    fn rotate_by_anchor(&mut self, angle: f64, axis: DVec3, anchor: Anchor) -> &mut Self {
-        self.points.rotate_by_anchor(angle, axis, anchor);
+impl RotateTransform for Polygon {
+    fn rotate_on_axis(&mut self, axis: DVec3, angle: f64) -> &mut Self {
+        self.points.rotate_on_axis(axis, angle);
+        self.basis.rotate_on_axis(axis, angle);
         self
     }
 }
 
-impl Scale for Polygon {
-    fn scale_by_anchor(&mut self, scale: DVec3, anchor: Anchor) -> &mut Self {
-        self.points.scale_by_anchor(scale, anchor);
+impl ScaleTransform for Polygon {
+    fn scale(&mut self, scale: DVec3) -> &mut Self {
+        self.points.scale(scale);
         self
     }
 }
+
+// impl AffineTransform for Polygon {
+//     fn affine_transform_at_point(&mut self, mat: DAffine3, origin: DVec3) -> &mut Self {
+//         self.points.affine_transform_at_point(mat, origin);
+//         // TODO: how to transform basis?
+//         self
+//     }
+// }
 
 impl Alignable for Polygon {
     fn is_aligned(&self, other: &Self) -> bool {
@@ -451,7 +479,7 @@ impl From<Polygon> for VItem {
             stroke_rgba,
             stroke_width,
             fill_rgba,
-            proj,
+            basis,
             ..
         } = value;
         assert!(points.len() > 2);
@@ -468,12 +496,14 @@ impl From<Polygon> for VItem {
 
         // Interleave anchors and handles
         let vpoints = anchors.into_iter().interleave(handles).collect::<Vec<_>>();
-        VItem::from_vpoints(vpoints).with_proj(proj).with(|vitem| {
-            vitem
-                .set_fill_color(fill_rgba)
-                .set_stroke_color(stroke_rgba)
-                .set_stroke_width(stroke_width);
-        })
+        VItem::from_vpoints(vpoints)
+            .with_basis(basis)
+            .with(|vitem| {
+                vitem
+                    .set_fill_color(fill_rgba)
+                    .set_stroke_color(stroke_rgba)
+                    .set_stroke_width(stroke_width);
+            })
     }
 }
 
@@ -481,5 +511,151 @@ impl Extract for Polygon {
     type Target = CoreItem;
     fn extract_into(&self, buf: &mut Vec<Self::Target>) {
         VItem::from(self.clone()).extract_into(buf);
+    }
+}
+
+#[derive(Debug, Clone, ranim_macros::Interpolatable)]
+/// A regular polygon.
+pub struct RegularPolygon {
+    /// Local coordinate system
+    pub basis: Basis2d,
+    /// Center of the polygon
+    pub center: DVec3,
+    /// Number of sides
+    pub sides: usize,
+    /// Radius of the polygon (i.e. distance from center to a vertex)
+    pub radius: f64,
+    /// Stroke rgba
+    pub stroke_rgba: AlphaColor<Srgb>,
+    /// Stroke width
+    pub stroke_width: f32,
+    /// Fill rgba
+    pub fill_rgba: AlphaColor<Srgb>,
+}
+
+impl Alignable for RegularPolygon {
+    fn is_aligned(&self, _other: &Self) -> bool {
+        true
+    }
+    fn align_with(&mut self, _other: &mut Self) {}
+}
+
+impl RegularPolygon {
+    /// Creates a new regular polygon.
+    pub fn new(sides: usize, radius: f64) -> Self {
+        assert!(sides >= 3);
+        Self {
+            basis: Basis2d::default(),
+            center: DVec3::ZERO,
+            sides,
+            radius,
+            stroke_rgba: AlphaColor::WHITE,
+            stroke_width: DEFAULT_STROKE_WIDTH,
+            fill_rgba: AlphaColor::TRANSPARENT,
+        }
+    }
+    /// Returns the vertices of the polygon.
+    pub fn points(&self) -> Vec<DVec3> {
+        let &Self {
+            sides,
+            radius,
+            center,
+            ..
+        } = self;
+        let u = self.basis.u();
+        let normal = self.basis.normal();
+        (0..sides)
+            .map(|i| TAU * (i as f64 / sides as f64))
+            .map(|angle| u.rotate_axis(normal, angle) * radius + center)
+            .collect()
+    }
+    /// Returns the outer circle of the polygon.
+    pub fn outer_circle(&self) -> Circle {
+        Circle::new(self.radius).with(|x| x.move_to(self.center).discard())
+    }
+    /// Returns the inner circle of the polygon.
+    pub fn inner_circle(&self) -> Circle {
+        Circle::new(self.radius * (PI / self.sides as f64).cos())
+            .with(|x| x.move_to(self.center).discard())
+    }
+}
+
+impl Aabb for RegularPolygon {
+    fn aabb(&self) -> [DVec3; 2] {
+        self.points().aabb()
+    }
+}
+
+impl ShiftTransform for RegularPolygon {
+    fn shift(&mut self, offset: DVec3) -> &mut Self {
+        self.center.shift(offset);
+        self
+    }
+}
+
+impl RotateTransform for RegularPolygon {
+    fn rotate_on_axis(&mut self, axis: DVec3, angle: f64) -> &mut Self {
+        self.basis.rotate_on_axis(axis, angle);
+        self.center.rotate_on_axis(axis, angle);
+        self
+    }
+}
+
+impl Opacity for RegularPolygon {
+    fn set_opacity(&mut self, opacity: f32) -> &mut Self {
+        self.fill_rgba = self.fill_rgba.with_alpha(opacity);
+        self.stroke_rgba = self.stroke_rgba.with_alpha(opacity);
+        self
+    }
+}
+
+impl FillColor for RegularPolygon {
+    fn fill_color(&self) -> AlphaColor<Srgb> {
+        self.fill_rgba
+    }
+
+    fn set_fill_color(&mut self, color: AlphaColor<Srgb>) -> &mut Self {
+        self.fill_rgba = color;
+        self
+    }
+
+    fn set_fill_opacity(&mut self, opacity: f32) -> &mut Self {
+        self.fill_rgba = self.fill_rgba.with_alpha(opacity);
+        self
+    }
+}
+
+impl StrokeColor for RegularPolygon {
+    fn stroke_color(&self) -> AlphaColor<Srgb> {
+        self.stroke_rgba
+    }
+
+    fn set_stroke_opacity(&mut self, opacity: f32) -> &mut Self {
+        self.stroke_rgba = self.stroke_rgba.with_alpha(opacity);
+        self
+    }
+
+    fn set_stroke_color(&mut self, color: AlphaColor<Srgb>) -> &mut Self {
+        self.stroke_rgba = color;
+        self
+    }
+}
+
+impl From<RegularPolygon> for Polygon {
+    fn from(value: RegularPolygon) -> Self {
+        Polygon::new(value.points()).with(|x| {
+            x.basis = value.basis;
+            x.fill_rgba = value.fill_rgba;
+            x.stroke_rgba = value.stroke_rgba;
+            x.stroke_width = value.stroke_width;
+        })
+    }
+}
+
+impl Extract for RegularPolygon {
+    type Target = CoreItem;
+
+    fn extract_into(&self, buf: &mut Vec<Self::Target>) {
+        Polygon::from(self.clone()).extract_into(buf);
     }
 }

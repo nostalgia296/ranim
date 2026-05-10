@@ -5,7 +5,7 @@ use std::{
 
 use krates::Kid;
 use notify_debouncer_full::{DebouncedEvent, Debouncer};
-use ranim::cmd::preview::{AppCmd, RanimApp};
+use ranim::cmd::preview::{RanimPreviewApp, RanimPreviewAppCmd};
 
 use anyhow::Result;
 use async_channel::{Receiver, bounded, unbounded};
@@ -151,7 +151,7 @@ pub fn preview_command(args: &CliArgs, scene_name: &Option<String>) -> Result<()
         .expect("Failed on initial build");
 
     let scene = match scene_name {
-        Some(scene) => lib.scenes().find(|s| s.name == scene),
+        Some(scene) => lib.scenes().find(|s| s.name == *scene),
         None => lib.scenes().next(),
     }
     .ok_or(anyhow::anyhow!("Failed to find preview scene"))?;
@@ -160,8 +160,8 @@ pub fn preview_command(args: &CliArgs, scene_name: &Option<String>) -> Result<()
     //     info!("- {:?}", scene.name);
     // }
     // panic!("Failed to get preview scene");
-    let mut app = RanimApp::new(scene.constructor, scene.name.to_string());
-    app.set_clear_color_str(scene.config.clear_color);
+    let mut app = RanimPreviewApp::new(scene.constructor, scene.name.clone(), scene.config.clone());
+    app.set_clear_color_str(&scene.config.clear_color);
     let cmd_tx = app.cmd_tx.clone();
 
     let scene_name = scene_name.clone();
@@ -180,7 +180,7 @@ pub fn preview_command(args: &CliArgs, scene_name: &Option<String>) -> Result<()
                 && let Ok(new_lib) = new_lib
             {
                 let scene = match &scene_name {
-                    Some(scene) => new_lib.scenes().find(|s| s.name == scene),
+                    Some(name) => new_lib.scenes().find(|s| s.name == *name),
                     None => new_lib.scenes().next(),
                 }
                 .ok_or(anyhow::anyhow!("Failed to find preview scene"));
@@ -188,11 +188,9 @@ pub fn preview_command(args: &CliArgs, scene_name: &Option<String>) -> Result<()
                     error!("Failed to find preview scene: {err}");
                     continue;
                 }
-                let scene = scene.unwrap();
-
                 let (tx, rx) = bounded(1);
                 cmd_tx
-                    .send_blocking(AppCmd::ReloadScene(scene.clone(), tx))
+                    .send_blocking(RanimPreviewAppCmd::ReloadScene(scene.unwrap(), tx))
                     .unwrap();
                 rx.recv_blocking().unwrap();
                 lib.replace(new_lib);

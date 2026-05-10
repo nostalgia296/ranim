@@ -11,14 +11,14 @@ use ranim::{
 const SVG: &str = include_str!("../../assets/Ghostscript_Tiger.svg");
 
 #[scene]
-#[output(dir = "basic")]
+#[output(dir = "./output/basic")]
 fn basic(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
     r.timelines_mut().forward(0.2);
 
     let mut svg = Vec::<VItem>::from(SvgItem::new(SVG).with(|svg| {
         svg.scale_to_with_stroke(ScaleHint::PorportionalY(3.0))
-            .put_center_on(DVec3::Y * 2.0);
+            .move_to(DVec3::Y * 2.0);
     }));
     let mut text = Vec::<VItem>::from(
         SvgItem::new(typst_svg(
@@ -32,7 +32,7 @@ fn basic(r: &mut RanimScene) {
         ))
         .with(|text| {
             text.scale_to_with_stroke(ScaleHint::PorportionalY(2.0))
-                .put_center_on(DVec3::NEG_Y * 2.0)
+                .move_to(DVec3::NEG_Y * 2.0)
                 .set_color(manim::WHITE)
                 .set_fill_opacity(0.8);
         }),

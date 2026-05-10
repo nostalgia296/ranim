@@ -1,12 +1,12 @@
 use ranim::glam;
 use std::f64::consts::PI;
 
-use glam::{DVec3, dvec3};
+use glam::dvec3;
 use ranim::{
     anims::{
         creation::{CreationAnim, WritingAnim},
         fading::FadingAnim,
-        transform::TransformAnim,
+        morph::MorphAnim,
     },
     color::palettes::manim,
     items::vitem::{
@@ -28,7 +28,10 @@ fn pentagon() -> VItem {
             .collect(),
     )
     .with(|x| {
-        x.set_color(manim::RED_C).rotate(PI / 2.0, DVec3::Z);
+        x.set_color(manim::RED_C);
+        x.with_origin(AabbPoint::CENTER, |x| {
+            x.rotate_on_z(PI / 2.0);
+        });
     })
     .into()
 }
@@ -39,13 +42,13 @@ fn pentagon() -> VItem {
 fn fading(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
     let mut pentagon_in = pentagon().with(|x| {
-        x.put_center_on(dvec3(0.0, 2.0, 0.0));
+        x.move_to(dvec3(0.0, 2.0, 0.0));
     });
     let mut pentagon_out = pentagon().with(|x| {
-        x.put_center_on(dvec3(0.0, -2.0, 0.0));
+        x.move_to(dvec3(0.0, -2.0, 0.0));
     });
-    let r_in = r.new_timeline();
-    let r_out = r.new_timeline();
+    let r_in = r.insert_empty();
+    let r_out = r.insert_empty();
     r.timeline_mut(r_in).play(pentagon_in.fade_in());
     r.timeline_mut(r_out).play(pentagon_out.fade_out());
 }
@@ -56,13 +59,13 @@ fn creation(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
 
     let mut pentagon_in = pentagon().with(|x| {
-        x.put_center_on(dvec3(0.0, 2.0, 0.0));
+        x.move_to(dvec3(0.0, 2.0, 0.0));
     });
     let mut pentagon_out = pentagon().with(|x| {
-        x.put_center_on(dvec3(0.0, -2.0, 0.0));
+        x.move_to(dvec3(0.0, -2.0, 0.0));
     });
-    let r_in = r.new_timeline();
-    let r_out = r.new_timeline();
+    let r_in = r.insert_empty();
+    let r_out = r.insert_empty();
     r.timeline_mut(r_in).play(pentagon_in.create());
     r.timeline_mut(r_out).play(pentagon_out.uncreate());
 }
@@ -73,13 +76,13 @@ fn creation(r: &mut RanimScene) {
 fn writing(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
     let mut pentagon_in = pentagon().with(|x| {
-        x.put_center_on(dvec3(0.0, 2.0, 0.0));
+        x.move_to(dvec3(0.0, 2.0, 0.0));
     });
     let mut pentagon_out = pentagon().with(|x| {
-        x.put_center_on(dvec3(0.0, -2.0, 0.0));
+        x.move_to(dvec3(0.0, -2.0, 0.0));
     });
-    let r_in = r.new_timeline();
-    let r_out = r.new_timeline();
+    let r_in = r.insert_empty();
+    let r_out = r.insert_empty();
     r.timeline_mut(r_in).play(pentagon_in.write());
     r.timeline_mut(r_out).play(pentagon_out.unwrite());
 }
@@ -90,37 +93,23 @@ fn writing(r: &mut RanimScene) {
 fn transform(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
     let src = Square::new(2.0).with(|x| {
-        x.set_color(manim::RED_C)
-            .put_center_on(dvec3(0.0, 2.0, 0.0));
+        x.set_color(manim::RED_C).move_to(dvec3(0.0, 2.0, 0.0));
     });
     let dst = Circle::new(1.5).with(|x| {
-        x.set_color(manim::BLUE_C)
-            .put_center_on(dvec3(0.0, -2.0, 0.0));
+        x.set_color(manim::BLUE_C).move_to(dvec3(0.0, -2.0, 0.0));
     });
-    // dst.rotate(PI / 4.0 + PI, DVec3::Z); // rotate to match src
-    let r_item = r.new_timeline();
+    // dst.with_origin(AabbPoint::CENTER, |x| { x.rotate_on_z(PI / 4.0 + PI); }); // rotate to match src
+    let r_item = r.insert_empty();
     r.timeline_mut(r_item).play(
         VItem::from(src)
-            .transform_to(VItem::from(dst))
+            .morph_to(VItem::from(dst))
             .with_rate_func(linear),
     );
 }
 
 fn main() {
-    #[cfg(feature = "preview")]
-    {
-        use ranim::cmd::preview_scene;
-        preview_scene(fading_scene);
-        preview_scene(creation_scene);
-        preview_scene(writing_scene);
-        preview_scene(transform_scene);
-    }
-    #[cfg(feature = "render")]
-    {
-        use ranim::cmd::render_scene;
-        render_scene(fading_scene);
-        render_scene(creation_scene);
-        render_scene(writing_scene);
-        render_scene(transform_scene);
-    }
+    ranim::render_scene!(fading);
+    ranim::render_scene!(creation);
+    ranim::render_scene!(writing);
+    ranim::render_scene!(transform);
 }

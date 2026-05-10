@@ -1,9 +1,9 @@
 use glam::{DVec3, dvec2};
 use rand::{SeedableRng, seq::SliceRandom};
-use ranim::glam;
+use ranim::glam::{self, dvec3};
 use ranim::{
-    anims::transform::TransformAnim, color::palettes::manim, items::vitem::geometry::Rectangle,
-    prelude::*, utils::rate_functions::linear,
+    anims::morph::MorphAnim, color::palettes::manim, items::vitem::geometry::Rectangle, prelude::*,
+    utils::rate_functions::linear,
 };
 
 fn selective_sort(r: &mut RanimScene, num: usize) {
@@ -33,21 +33,21 @@ fn selective_sort(r: &mut RanimScene, num: usize) {
             let rect = Rectangle::new(width_unit, height).with(|rect| {
                 rect.fill_rgba = manim::WHITE.with_alpha(0.5);
                 rect.scale(DVec3::splat(0.8))
-                    .put_anchor_on(Anchor::edge(0, -1, 0), target_bc_coord);
+                    .move_anchor_to(AabbPoint(dvec3(0.0, -1.0, 0.0)), target_bc_coord);
             });
             (r.insert(rect.clone()), rect)
         })
         .collect::<Vec<_>>();
 
     let highlight = |rect: &mut Rectangle| {
-        rect.transform(|data| {
+        rect.morph(|data| {
             data.set_color(manim::RED_C).set_fill_opacity(0.5);
         })
         .with_duration(anim_step_duration)
         .with_rate_func(linear)
     };
     let unhighlight = |rect: &mut Rectangle| {
-        rect.transform(|data| {
+        rect.morph(|data| {
             data.set_color(manim::WHITE).set_fill_opacity(0.5);
         })
         .with_duration(anim_step_duration)
@@ -73,7 +73,7 @@ fn selective_sort(r: &mut RanimScene, num: usize) {
                     .zip(color)
                     .for_each(|(((timeline, rect), dir), color)| {
                         timeline.play(
-                            rect.transform(|rect| {
+                            rect.morph(|rect| {
                                 rect.shift(dir * (j - i) as f64)
                                     .set_color(color)
                                     .set_fill_opacity(0.5);
@@ -100,13 +100,13 @@ fn selective_sort(r: &mut RanimScene, num: usize) {
 }
 
 #[scene]
-#[output(dir = "selective_sort")]
+#[output(dir = "./output/selective_sort")]
 fn selective_sort_10(r: &mut RanimScene) {
     selective_sort(r, 10);
 }
 
 #[scene(name = "selective_sort")]
-#[output(dir = "selective_sort")]
+#[output(dir = "./output/selective_sort")]
 fn selective_sort_100(r: &mut RanimScene) {
     selective_sort(r, 100);
 }

@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use async_channel::{Receiver, Sender, bounded};
 use libloading::{Library, Symbol};
-use ranim::Scene;
+use ranim::{Scene, StaticScene};
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -143,8 +143,8 @@ pub struct RanimUserLibrarySceneIter<'a> {
     idx: usize,
 }
 
-impl<'a> Iterator for RanimUserLibrarySceneIter<'a> {
-    type Item = &'a Scene;
+impl Iterator for RanimUserLibrarySceneIter<'_> {
+    type Item = Scene;
 
     fn next(&mut self) -> Option<Self::Item> {
         let res = self.lib.get_scene(self.idx);
@@ -187,21 +187,21 @@ impl RanimUserLibrary {
         scene_cnt()
     }
 
-    pub fn get_scene(&self, idx: usize) -> Option<&Scene> {
-        let get_scene: Symbol<extern "C" fn(usize) -> *const Scene> =
+    pub fn get_scene(&self, idx: usize) -> Option<Scene> {
+        let get_scene: Symbol<extern "C" fn(usize) -> *const StaticScene> =
             unsafe { self.inner.as_ref().unwrap().get(b"get_scene").unwrap() };
         if self.scene_cnt() <= idx {
             None
         } else {
-            Some(unsafe { &*get_scene(idx) })
+            Some(Scene::from(unsafe { &*get_scene(idx) }))
         }
     }
 
-    pub fn scenes(&self) -> impl Iterator<Item = &Scene> {
+    pub fn scenes(&self) -> impl Iterator<Item = Scene> {
         RanimUserLibrarySceneIter { lib: self, idx: 0 }
     }
 
-    pub fn get_preview_func(&self) -> Result<&Scene> {
+    pub fn get_preview_func(&self) -> Result<Scene> {
         self.scenes().next().context("no scene found")
     }
 }
@@ -336,9 +336,10 @@ fn get_dylib_path(
     target_dir.join(dylib_name)
 }
 
-/// main
-pub fn main() {
-    use clap::Parser;
+/// This should only be called once per process.
+///
+/// If you use [`main`], this is called automatically.
+pub fn init_tracing() {
     use tracing::level_filters::LevelFilter;
     use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -365,6 +366,11 @@ pub fn main() {
         .with(indicatif_layer)
         .with(build_filter())
         .init();
+}
 
+/// main
+pub fn main() {
+    use clap::Parser;
+    init_tracing();
     Cli::parse().run().unwrap();
 }

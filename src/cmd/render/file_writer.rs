@@ -4,7 +4,46 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
 };
 
+use crate::OutputFormat;
 use tracing::info;
+
+/// Extension trait providing ffmpeg encoding parameters for [`OutputFormat`].
+pub(crate) trait OutputFormatExt {
+    /// Returns `(video_codec, pixel_format, file_extension)`.
+    fn encoding_params(&self) -> (&'static str, &'static str, &'static str);
+    /// Returns extra codec arguments for ffmpeg.
+    fn extra_args(&self) -> &'static [&'static str];
+    /// Whether this format has an alpha channel.
+    fn has_alpha(&self) -> bool;
+    /// Whether the `eq` video filter is compatible with this format.
+    fn supports_eq_filter(&self) -> bool;
+}
+
+impl OutputFormatExt for OutputFormat {
+    fn encoding_params(&self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Mp4 => ("libx264", "yuv420p", "mp4"),
+            Self::Webm => ("libvpx-vp9", "yuva420p", "webm"),
+            Self::Mov => ("prores_ks", "yuva444p10le", "mov"),
+            Self::Gif => ("gif", "rgb8", "gif"),
+        }
+    }
+
+    fn extra_args(&self) -> &'static [&'static str] {
+        match self {
+            Self::Mov => &["-profile:v", "4444"],
+            _ => &[],
+        }
+    }
+
+    fn has_alpha(&self) -> bool {
+        matches!(self, Self::Webm | Self::Mov)
+    }
+
+    fn supports_eq_filter(&self) -> bool {
+        !self.has_alpha()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FileWriterBuilder {
@@ -16,6 +55,7 @@ pub struct FileWriterBuilder {
 
     pub video_codec: String,
     pub pixel_format: String,
+    pub extra_codec_args: Vec<String>,
 }
 
 impl Default for FileWriterBuilder {
@@ -29,6 +69,7 @@ impl Default for FileWriterBuilder {
             vf_args: vec!["eq=saturation=1.0:gamma=1.0".to_string()],
             video_codec: "libx264".to_string(),
             pixel_format: "yuv420p".to_string(),
+            extra_codec_args: Vec::new(),
         }
     }
 }
@@ -51,6 +92,25 @@ impl FileWriterBuilder {
         self
     }
 
+    pub fn with_output_format(mut self, format: OutputFormat) -> Self {
+        let (codec, pix_fmt, ext) = format.encoding_params();
+        self.video_codec = codec.to_string();
+        self.pixel_format = pix_fmt.to_string();
+        self.extra_codec_args = format.extra_args().iter().map(|s| s.to_string()).collect();
+        // Update file extension to match the format
+        self.file_path = self.file_path.with_extension(ext);
+        // The eq filter doesn't support alpha pixel formats
+        if !format.supports_eq_filter() {
+            self.vf_args.clear();
+        }
+        // GIF timing uses centiseconds (10ms units), so fps above 50
+        // gets rounded and causes incorrect playback speed.
+        if format == OutputFormat::Gif && self.fps > 50 {
+            self.fps = 50;
+        }
+        self
+    }
+
     pub fn enable_fast_encoding(mut self) -> Self {
         self.video_codec = "libx264rgb".to_string();
         self.pixel_format = "rgb32".to_string();
@@ -70,43 +130,38 @@ impl FileWriterBuilder {
     }
 
     pub fn build(self) -> FileWriter {
-        // let tmp_file_path = self.file_path.with_file_name(format!(
-        //     "{}_tmp.{}",
-        //     self.file_path.file_stem().unwrap().to_string_lossy(),
-        //     self.file_path
-        //         .extension()
-        //         .map(|s| s.to_string_lossy())
-        //         .unwrap_or("mp4".into())
-        // ));
         let parent = self.file_path.parent().unwrap();
         if !parent.exists() {
             std::fs::create_dir_all(parent).unwrap();
         }
 
-        let mut command = if let Ok(ffmpeg_path) = which::which("ffmpeg") {
+        let mut command = if which::which("ffmpeg").is_ok() {
             info!("using ffmpeg found from path env");
             Command::new("ffmpeg")
         } else {
             info!("using ffmpeg from current working dir");
             Command::new("./ffmpeg")
         };
-        #[rustfmt::skip]
-        let command = command.args([
-            "-y",
-            "-f", "rawvideo",
-            "-s", format!("{}x{}", self.width, self.height).as_str(),
-            "-pix_fmt", "rgba",
-            "-r", self.fps.to_string().as_str(),
-            "-i", "-",
-            "-an",
-            "-loglevel", "error",
-            "-vcodec", self.video_codec.as_str(),
-            "-pix_fmt", self.pixel_format.as_str(),
-            &self.file_path.to_string_lossy(),
-        ]).stdin(Stdio::piped());
+
+        let size = format!("{}x{}", self.width, self.height);
+        let fps = self.fps.to_string();
+        let file_path = self.file_path.to_string_lossy().to_string();
+
+        // Input options (before -i)
+        command.args([
+            "-y", "-f", "rawvideo", "-s", &size, "-pix_fmt", "rgba", "-r", &fps, "-i", "-",
+        ]);
+        // Output options (before output file)
+        command.args(["-an", "-loglevel", "error", "-vcodec", &self.video_codec]);
+        command.args(&self.extra_codec_args);
+        command.args(["-pix_fmt", &self.pixel_format]);
         if !self.vf_args.is_empty() {
-            command.args(["-vf", self.vf_args.join(",").as_str()]);
+            let vf = self.vf_args.join(",");
+            command.args(["-vf", &vf]);
         }
+        // Output file must be last
+        command.arg(&file_path);
+        command.stdin(Stdio::piped());
 
         let mut child = command.spawn().expect("Failed to spawn ffmpeg");
         FileWriter {

@@ -7,7 +7,6 @@ fmt:
     cargo fmt --all
 
 lint: lint-no-features
-    just lint-features preview
     just lint-features render
     just lint-features profiling
 
@@ -23,8 +22,6 @@ changelog:
     git cliff -o CHANGELOG.md
 
 website:
-    just doc
-    just book
     zola --root website build
 
 doc-nightly:
@@ -41,3 +38,6 @@ doc:
 
 book:
     mdbook build book
+
+preview EXAMPLE:
+    cargo run -p ranim-cli -- preview --example {{ EXAMPLE }}

@@ -42,7 +42,7 @@ Currently, it is experimental on crates.io:
 
 ```toml
 [dependencies]
-ranim = "0.1.5"
+ranim = "0.2.0"
 ```
 
 You can also use from git for the latest updates:
@@ -121,6 +121,10 @@ ranim render -p render scene_a scene_b -- --release
   
   ![image](https://github.com/user-attachments/assets/36bf841c-e30f-45cc-adbc-bd4bfff9bc4c)
    
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## Design
 

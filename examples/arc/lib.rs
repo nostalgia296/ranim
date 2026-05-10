@@ -7,9 +7,10 @@ use ranim::{
     items::vitem::geometry::Arc,
     prelude::*,
 };
+use ranim_items::vitem::geometry::anchor::Origin;
 
 #[scene]
-#[output(dir = "arc")]
+#[output(dir = "./output/arc")]
 pub fn arc(r: &mut RanimScene) {
     let _r_cam = r.insert(CameraFrame::default());
 
@@ -41,11 +42,11 @@ pub fn arc(r: &mut RanimScene) {
             Arc::new(angle, radius).with(|arc| {
                 arc.stroke_width = 0.12 * (j as f32 + 0.02) / ncol as f32;
                 arc.set_stroke_color(color)
-                    .put_center_on(offset.extend(0.0));
+                    .move_anchor_to(Origin, offset.extend(0.0));
             })
         })
         .collect::<Vec<_>>();
-    let r_arcs = r.new_timeline();
+    let r_arcs = r.insert_empty();
 
     r.timeline_mut(r_arcs)
         .play(arcs.lagged(0.2, |arc| arc.fade_in()).with_duration(3.0));

@@ -17,11 +17,10 @@ pub mod resource;
 pub mod utils;
 
 use glam::{UVec3, uvec3};
-use image::{ImageBuffer, Luma, Rgba};
 
 use crate::{
     graph::{AnyGlobalRenderNodeTrait, GlobalRenderGraph, RenderPackets},
-    primitives::viewport::ViewportUniform,
+    primitives::{mesh_items::MeshItemsBuffer, viewport::ViewportUniform, vitems::VItemsBuffer},
     resource::{PipelinesPool, RenderPool, RenderTextures},
     utils::{WgpuBuffer, WgpuVecBuffer},
 };
@@ -92,21 +91,25 @@ pub struct RenderContext<'a> {
     pub wgpu_ctx: &'a WgpuContext,
     pub resolution_info: &'a ResolutionInfo,
     pub clear_color: wgpu::Color,
+    /// Present when using the merged rendering path.
+    pub merged_buffer: Option<&'a VItemsBuffer>,
+    /// Present when using the merged mesh rendering path.
+    pub merged_mesh_buffer: Option<&'a MeshItemsBuffer>,
 }
 
 // MARK: Renderer
 pub struct Renderer {
     width: u32,
     height: u32,
-    resolution_info: ResolutionInfo,
+    pub(crate) resolution_info: ResolutionInfo,
     pub(crate) pipelines: PipelinesPool,
     packets: RenderPackets,
     render_graph: GlobalRenderGraph,
 
-    pub render_textures: RenderTextures,
-
-    pub(crate) output_texture_dirty: bool,
-    pub(crate) depth_texture_dirty: bool,
+    /// Present when using the merged rendering path (lazily initialized on first use).
+    merged_buffer: Option<VItemsBuffer>,
+    /// Present when using the merged mesh rendering path (lazily initialized on first use).
+    merged_mesh_buffer: Option<MeshItemsBuffer>,
 
     #[cfg(feature = "profiling")]
     pub(crate) profiler: wgpu_profiler::GpuProfiler,
@@ -125,14 +128,44 @@ impl Renderer {
         self.width as f32 / self.height as f32
     }
 
-    pub fn new(ctx: &WgpuContext, width: u32, height: u32, oit_layers: usize) -> Self {
-        let resolution_info = ResolutionInfo::new(ctx, width, height, oit_layers);
-        let render_textures = RenderTextures::new(ctx, width, height);
+    fn build_render_graph() -> GlobalRenderGraph {
+        use graph::*;
+        let mut render_graph = GlobalRenderGraph::new();
+        let clear = render_graph.insert_node(ClearNode);
+        let view_render = render_graph.insert_node({
+            use graph::view::*;
+            let mut render_graph = ViewRenderGraph::new();
+            let vitem_compute = render_graph.insert_node(MergedVItemComputeNode);
+            let vitem_depth = render_graph.insert_node(MergedVItemDepthNode);
+            let mesh_depth = render_graph.insert_node(MergedMeshItemDepthNode);
+            let vitem_color = render_graph.insert_node(MergedVItemColorNode);
+            let mesh_color = render_graph.insert_node(MergedMeshItemColorNode);
 
-        // let viewport = ViewportGpuPacket::init(
-        //     ctx,
-        //     &ViewportUniform::from_camera_frame(&camera, width as u32, height as u32),
-        // );
+            render_graph.insert_edge(vitem_compute, vitem_depth);
+            render_graph.insert_edge(vitem_depth, vitem_color);
+            render_graph.insert_edge(vitem_depth, mesh_color);
+            render_graph.insert_edge(mesh_depth, mesh_color);
+            render_graph.insert_edge(mesh_depth, vitem_color);
+            render_graph
+        });
+        let oit_resolve = render_graph.insert_node(OITResolveNode);
+        render_graph.insert_edge(clear, view_render);
+        render_graph.insert_edge(view_render, oit_resolve);
+        render_graph
+    }
+
+    pub fn new(ctx: &WgpuContext, width: u32, height: u32, oit_layers: usize) -> Self {
+        Self::new_with_graph(ctx, width, height, oit_layers, Self::build_render_graph())
+    }
+
+    pub fn new_with_graph(
+        ctx: &WgpuContext,
+        width: u32,
+        height: u32,
+        oit_layers: usize,
+        render_graph: GlobalRenderGraph,
+    ) -> Self {
+        let resolution_info = ResolutionInfo::new(ctx, width, height, oit_layers);
 
         #[cfg(feature = "profiling")]
         let profiler = wgpu_profiler::GpuProfiler::new(
@@ -141,62 +174,51 @@ impl Renderer {
         )
         .unwrap();
 
-        let mut render_graph = GlobalRenderGraph::new();
-        {
-            use graph::*;
-            // Global Render Nodes that executes per-frame
-            let clear = render_graph.insert_node(ClearNode);
-            let view_render = render_graph.insert_node({
-                use graph::view::*;
-                // View Render Nodes that executes per-viewport in every frame
-                let mut render_graph = ViewRenderGraph::new();
-                let vitem_compute = render_graph.insert_node(VItemComputeNode);
-                let vitem2d_depth = render_graph.insert_node(VItemDepthNode);
-                let vitem2d_render = render_graph.insert_node(VItemColorNode);
-                let oit_resolve = render_graph.insert_node(OITResolveNode);
-                render_graph.insert_edge(vitem_compute, vitem2d_depth);
-                render_graph.insert_edge(vitem2d_depth, vitem2d_render);
-                render_graph.insert_edge(vitem2d_render, oit_resolve);
-                render_graph
-            });
-            render_graph.insert_edge(clear, view_render);
-        }
-
         Self {
             width,
             height,
             resolution_info,
             pipelines: PipelinesPool::default(),
-            render_textures,
             packets: RenderPackets::default(),
             render_graph,
-            // Textures state
-            output_texture_dirty: true,
-            depth_texture_dirty: true,
-            // Profiler
+            merged_buffer: None,
+            merged_mesh_buffer: None,
             #[cfg(feature = "profiling")]
             profiler,
         }
     }
 
+    pub fn new_render_textures(&self, ctx: &WgpuContext) -> RenderTextures {
+        RenderTextures::new(ctx, self.width, self.height)
+    }
+
+    /// Render a frame. Pushes viewport + VItem packets via pool, then execs the render graph.
     pub fn render_store_with_pool(
         &mut self,
         ctx: &WgpuContext,
+        render_textures: &mut RenderTextures,
         clear_color: wgpu::Color,
         store: &CoreItemStore,
         pool: &mut RenderPool,
     ) {
-        let (_id, camera_frame) = &store.camera_frames[0];
+        // Viewport — always needed
+        let camera_frame = &store.camera_frames[0];
         let viewport = ViewportUniform::from_camera_frame(camera_frame, self.width, self.height);
-
         self.packets.push(pool.alloc_packet(ctx, &viewport));
-        self.packets.extend(
-            store
-                .vitems
-                .iter()
-                .map(|(_id, data)| pool.alloc_packet(ctx, data)),
-        );
 
+        // Merged buffer (merged nodes read this; old nodes ignore it)
+        let merged = self
+            .merged_buffer
+            .get_or_insert_with(|| VItemsBuffer::new(ctx));
+        merged.update(ctx, &store.vitems);
+
+        // Merged mesh buffer
+        let merged_mesh = self
+            .merged_mesh_buffer
+            .get_or_insert_with(|| MeshItemsBuffer::new(ctx));
+        merged_mesh.update(ctx, &store.mesh_items);
+
+        // Encode & submit
         {
             #[cfg(feature = "profiling")]
             profiling::scope!("render");
@@ -209,14 +231,16 @@ impl Renderer {
                 #[cfg(feature = "profiling")]
                 let mut scope = self.profiler.scope("render", &mut encoder);
 
-                let ctx = RenderContext {
+                let render_ctx = RenderContext {
                     pipelines: &self.pipelines,
-                    render_textures: &self.render_textures,
+                    render_textures,
                     render_packets: &self.packets,
                     render_pool: pool,
                     wgpu_ctx: ctx,
                     resolution_info: &self.resolution_info,
                     clear_color,
+                    merged_buffer: self.merged_buffer.as_ref(),
+                    merged_mesh_buffer: self.merged_mesh_buffer.as_ref(),
                 };
 
                 self.render_graph.exec(
@@ -224,7 +248,7 @@ impl Renderer {
                     &mut encoder,
                     #[cfg(feature = "profiling")]
                     &mut scope,
-                    ctx,
+                    render_ctx,
                 );
             }
 
@@ -239,19 +263,14 @@ impl Renderer {
                     ctx.queue.submit(Some(encoder.finish()));
                 }
 
-                // renderable.debug(ctx);
-
-                // Signal to the profiler that the frame is finished.
                 self.profiler.end_frame().unwrap();
 
-                // Query for oldest finished frame (this is almost certainly not the one we just submitted!) and display results in the command line.
                 ctx.device
                     .poll(wgpu::PollType::wait_indefinitely())
                     .unwrap();
                 let latest_profiler_results = self
                     .profiler
                     .process_finished_frame(ctx.queue.get_timestamp_period());
-                // profiling_utils::console_output(&latest_profiler_results, ctx.wgpu_ctx.device.features());
                 let mut gpu_profiler = PUFFIN_GPU_PROFILER.lock().unwrap();
                 wgpu_profiler::puffin::output_frame_to_puffin(
                     &mut gpu_profiler,
@@ -260,52 +279,10 @@ impl Renderer {
                 gpu_profiler.new_frame();
             }
 
-            self.output_texture_dirty = true;
-            self.depth_texture_dirty = true;
+            render_textures.mark_dirty();
         }
 
         self.packets.clear();
-        // drop(render_primitives);
-    }
-
-    pub fn get_rendered_texture_data(&mut self, ctx: &WgpuContext) -> &[u8] {
-        if !self.output_texture_dirty {
-            // trace!("[Camera] Updating rendered texture data...");
-            return self.render_textures.render_texture.texture_data();
-        }
-        self.output_texture_dirty = false;
-        self.render_textures.render_texture.update_texture_data(ctx)
-    }
-    pub fn get_rendered_texture_img_buffer(
-        &mut self,
-        ctx: &WgpuContext,
-    ) -> ImageBuffer<Rgba<u8>, &[u8]> {
-        ImageBuffer::from_raw(self.width, self.height, self.get_rendered_texture_data(ctx)).unwrap()
-    }
-
-    pub fn get_depth_texture_data(&mut self, ctx: &WgpuContext) -> &[f32] {
-        if !self.depth_texture_dirty {
-            return bytemuck::cast_slice(self.render_textures.depth_stencil_texture.texture_data());
-        }
-        self.depth_texture_dirty = false;
-        bytemuck::cast_slice(
-            self.render_textures
-                .depth_stencil_texture
-                .update_texture_data(ctx),
-        )
-    }
-
-    pub fn get_depth_texture_img_buffer(
-        &mut self,
-        ctx: &WgpuContext,
-    ) -> ImageBuffer<Luma<u8>, Vec<u8>> {
-        let data = self
-            .get_depth_texture_data(ctx)
-            .iter()
-            // Map 0.0-1.0 to 0-255
-            .map(|&d| (d.clamp(0.0, 1.0) * 255.0) as u8)
-            .collect::<Vec<_>>();
-        ImageBuffer::from_raw(self.width, self.height, data).unwrap()
     }
 }
 

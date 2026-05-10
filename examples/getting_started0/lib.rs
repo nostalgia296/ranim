@@ -4,7 +4,7 @@ use ranim::{
 
 // ANCHOR: construct
 #[scene]
-#[output(dir = "getting_started0")]
+#[output(dir = "./output/getting_started0")]
 fn getting_started0(r: &mut RanimScene) {
     // Equivalent to creating a new timeline then playing `CameraFrame::default().show()` on it
     let _r_cam = r.insert(CameraFrame::default());
@@ -13,7 +13,7 @@ fn getting_started0(r: &mut RanimScene) {
         square.set_color(manim::BLUE_C);
     });
 
-    let r_square = r.new_timeline();
+    let r_square = r.insert_empty();
     {
         let timeline = r.timeline_mut(r_square);
         timeline
